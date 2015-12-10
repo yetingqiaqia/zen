@@ -488,6 +488,149 @@ abstract class LDAWordByWord extends LDAAlgorithm {
   }
 }
 
+class ZenSemiLDA extends LDAWordByWord {
+  override def samplePartition(numThreads: Int, // N of threads
+                               accelMethod: String, // Accelerating Methods for Sampling
+                               numPartitions: Int, // N of Partitions
+                               sampIter: Int,
+                               seed: Int,
+                               topicCounters: BDV[Count], //
+                               numTokens: Long, // N of total tokens
+                               numTopics: Int, // N of total topics
+                               numTerms: Int,
+                               alpha: Double,
+                               alphaAS: Double,
+                               beta: Double)
+                              (pid: Int, ep: EdgePartition[TA, TC]): EdgePartition[TA, TC] = {
+    val alphaRatio = alpha * numTopics / (numTokens + alphaAS * numTopics) // alpha
+    val betaSum = beta * numTerms
+    val denoms = calc_denoms(topicCounters, betaSum)
+    val alphak_denoms = calc_alphak_denoms(denoms, alphaAS, betaSum, alphaRatio)
+    val beta_denoms = denoms.copy :*= beta
+    val totalSize = ep.size
+    val lcSrcIds = ep.localSrcIds
+    val lcDstIds = ep.localDstIds
+    val l2g = ep.local2global
+    val vattrs = ep.vertexAttrs
+    val data = ep.data
+    val thq = new ConcurrentLinkedQueue(0 until numThreads)
+    // table/ftree is a per term data structure
+    // in GraphX, edges in a partition are clustered by source IDs (term id in this case)
+    // so, use below simple cache to avoid calculating table each time
+    val global: DiscreteSampler[Double] = accelMethod match {
+      case "ftree" => new FTree[Double](numTopics, isSparse=false)
+      case "alias" | "hybrid" => new AliasTable(numTopics)
+    }
+    val gens = new Array[XORShiftRandom](numThreads)
+    val termDists = new Array[DiscreteSampler[Double]](numThreads)
+    val cdfDists = new Array[CumulativeDist[Double]](numThreads)
+    resetDist_abDense(global, alphak_denoms, beta)
+
+    implicit val es = ExecutionContext.fromExecutorService(Executors.newFixedThreadPool(numThreads))
+    val all = Future.traverse(ep.index.iterator)(Function.tupled((_, offset) => Future {
+      val thid = thq.poll()
+      var gen = gens(thid)
+      if (gen == null) {
+        gen = new XORShiftRandom(((seed + sampIter) * numPartitions + pid) * numThreads + thid)
+        gens(thid) = gen
+        termDists(thid) = accelMethod match {
+          case "alias" => new AliasTable[Double](numTopics)
+          case "ftree" | "hybrid" => new FTree(numTopics, isSparse=true)
+        }
+        cdfDists(thid) = new CumulativeDist[Double](numTopics)
+      }
+      val termDist = termDists(thid)
+      val si = lcSrcIds(offset)
+      if (isVirtualTermId(l2g(si))==false) {
+        val termTopics = vattrs(si)
+
+        resetDist_waSparse(termDist, alphak_denoms, termTopics)
+        val denseTermTopics = termTopics match {
+          case v: BDV[Count] => v
+          case v: BSV[Count] => toBDV(v)
+        }
+        val termBeta_denoms = calc_termBeta_denoms(denoms, beta_denoms, termTopics)
+        val cdfDist = cdfDists(thid)
+        var pos = offset
+        while (pos < totalSize && lcSrcIds(pos) == si) {
+          val di = lcDstIds(pos)
+          val docTopics = vattrs(di).asInstanceOf[BSV[Count]]
+          val topics = data(pos)
+          val occur = topics.length
+          if (occur == 1) {
+            val topic = topics(0)
+            resetDist_dwbSparse_withAdjust(cdfDist, denoms, termBeta_denoms, docTopics, topic)
+            topics(0) = tokenSampling(gen, global, termDist, cdfDist, denseTermTopics, topic)
+          } else {
+            resetDist_dwbSparse(cdfDist, termBeta_denoms, docTopics)
+            var i = 0
+            while (i < occur) {
+              val topic = topics(i)
+              topics(i) = tokenResampling(gen, global, termDist, cdfDist, denseTermTopics, docTopics, topic, beta)
+              i += 1
+            }
+          }
+          pos += 1
+        }
+      }
+      thq.add(thid)
+    }))
+    Await.ready(all, 2.hour)
+    es.shutdown()
+    ep.withoutVertexAttributes()
+  }
+
+  def tokenSampling(gen: Random,
+                    ab: DiscreteSampler[Double],
+                    wa: DiscreteSampler[Double],
+                    dwb: CumulativeDist[Double],
+                    termTopics: BDV[Count],
+                    topic: Int): Int = {
+    val dwbSum = dwb.norm
+    val sum23 = dwbSum + wa.norm
+    val distSum = sum23 + ab.norm
+    val genSum = gen.nextDouble() * distSum
+    if (genSum < dwbSum) {
+      dwb.sampleFrom(genSum, gen)
+    } else if (genSum < sum23) wa match {
+      case wt: AliasTable[Double] =>
+        val rr = 1.0 / termTopics(topic)
+        wt.resampleFrom(genSum - dwbSum, gen, topic, rr)
+      case wf: FTree[Double] => wf.sampleFrom(genSum - dwbSum, gen)
+    } else {
+      ab.sampleFrom(genSum - sum23, gen)
+    }
+  }
+
+  def tokenResampling(gen: Random,
+                      ab: DiscreteSampler[Double],
+                      wa: DiscreteSampler[Double],
+                      dwb: CumulativeDist[Double],
+                      termTopics: BDV[Count],
+                      docTopics: BSV[Count],
+                      topic: Int,
+                      beta: Double): Int = {
+    val dwbSum = dwb.norm
+    val sum23 = dwbSum + wa.norm
+    val distSum = sum23 + ab.norm
+    val genSum = gen.nextDouble() * distSum
+    if (genSum < dwbSum) {
+      val nkd = docTopics(topic)
+      val nkw_beta = termTopics(topic) + beta
+      val rr = 1.0 / nkd + 1.0 / nkw_beta - 1.0 / nkd / nkw_beta
+      dwb.resampleFrom(genSum, gen, topic, rr)
+    } else if (genSum < sum23) wa match {
+      case wt: AliasTable[Double] =>
+        val rr = 1.0 / termTopics(topic)
+        wt.resampleFrom(genSum - dwbSum, gen, topic, rr)
+      case wf: FTree[Double] => wf.sampleFrom(genSum - dwbSum, gen)
+    } else {
+      ab.sampleFrom(genSum - sum23, gen)
+    }
+  }
+}
+
+
 class ZenLDA extends LDAWordByWord {
   override def samplePartition(numThreads: Int,
     accelMethod: String,

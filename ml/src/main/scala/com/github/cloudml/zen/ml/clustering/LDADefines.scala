@@ -40,6 +40,7 @@ object LDADefines {
   type TC = BV[Count]
   type TA = Array[Int]
   type BOW = (Long, BSV[Count])
+  type SEMI = (Long, Long, BSV[Count]) // SEMI type for semi-LDA input
 
   val sv_formatVersionV1_0 = "1.0"
   val sv_classNameV1_0 = "com.github.cloudml.zen.ml.clustering.DistributedLDAModel"
@@ -59,7 +60,8 @@ object LDADefines {
   val cs_saveAsSolid = "zen.lda.saveAsSolid"
   val cs_numThreads = "zen.lda.numThreads"
   val cs_ignoreDocId = "zen.lda.ignoreDocId"
-
+  val cs_inputFormat = "zen.lda.inputFormat"
+  val cs_inputSemiRate = "zen.lda.inputSemiRate"
   // make docId always be negative, so that the doc vertex always be the dest vertex
   @inline def genNewDocId(docId: Long): VertexId = {
     assert(docId >= 0)
@@ -69,6 +71,10 @@ object LDADefines {
   @inline def isDocId(vid: VertexId): Boolean = vid < 0L
 
   @inline def isTermId(vid: VertexId): Boolean = vid >= 0L
+
+  @inline def isVirtualTermId(vid: VertexId): Boolean = ((vid &  0x7fff000000000000L) ==  0x7fff000000000000L)
+
+  @inline def isRealTermId(vid: VertexId): Boolean = isTermId(vid) && !isVirtualTermId(vid)
 
   def uniformDistSampler(gen: Random,
     tokens: Array[Int],

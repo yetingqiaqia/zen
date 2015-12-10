@@ -41,6 +41,7 @@ object LDADriver {
     val alphaAS = options("alphaas").toDouble
     val totalIter = options("totaliter").toInt
     val numPartitions = options("numpartitions").toInt
+
     assert(numTopics > 0, "numTopics must be greater than 0")
     assert(alpha > 0D)
     assert(beta > 0D)
@@ -64,7 +65,9 @@ object LDADriver {
 
     conf.set(cs_sampleRate, options.getOrElse("samplerate", "1.0"))
     conf.set(cs_numThreads, options.getOrElse("numthreads", "1"))
-    conf.set(cs_LDAAlgorithm, options.getOrElse("ldaalgorithm", "zenlda"))
+    conf.set(cs_inputFormat, options.getOrElse("inputformat", "semi"))
+    conf.set(cs_inputSemiRate, options.getOrElse("inputsemirate", "1.0"))
+    conf.set(cs_LDAAlgorithm, options.getOrElse("ldaalgorithm", "zensemilda"))
     conf.set(cs_accelMethod, options.getOrElse("accelmethod", "alias"))
     conf.set(cs_partStrategy, options.getOrElse("partstrategy", "dbh"))
     conf.set(cs_initStrategy, options.getOrElse("initstrategy", "random"))
@@ -139,7 +142,7 @@ object LDADriver {
     val sr = conf.get(cs_sampleRate).toDouble
     val reverse = conf.getOption(cs_LDAAlgorithm).exists(_.equals("sparselda"))
     val rawDocs = sc.textFile(inputPath, numPartitions).sample(false, sr)
-    LDA.initializeCorpusEdges(rawDocs, "raw", numTopics, reverse, storageLevel)
+    LDA.initializeCorpusEdges(rawDocs, conf.get(cs_inputFormat), numTopics, reverse, storageLevel)
   }
 
   def parseArgs(args: Array[String]): OptionMap = {
@@ -148,7 +151,9 @@ object LDADriver {
       "        -totalIter=<Int> -numPartitions=<Int>\n" +
       "  Options: -sampleRate=<Double(*1.0)>\n" +
       "           -numThreads=<Int(*1)>\n" +
-      "           -LDAAlgorithm=<*ZenLDA|LightLDA|SparseLDA>\n" +
+      "           -inputFormat=<*semi|raw|bow>\n" +
+      "           -inputSemiRate=<Double(*1.0)>\n" +
+      "           -LDAAlgorithm=<*ZenSemiLDA|ZenLDA|LightLDA|SparseLDA>\n" +
       "           -accelMethod=<*Alias|FTree|Hybrid>\n" +
       "           -storageLevel=<StorageLevel(*MEMORY_AND_DISK)>\n" +
       "           -partStrategy=<byTerm|byDoc|Edge2D|*DBH|VSDLP|BBR>\n" +

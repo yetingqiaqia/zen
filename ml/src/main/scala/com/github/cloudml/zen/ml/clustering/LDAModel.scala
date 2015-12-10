@@ -230,7 +230,7 @@ class DistributedLDAModel(@transient val termTopicsRDD: RDD[(VertexId, TC)],
    *                     in which \grave{termId}= termId + 1
    */
   def save(sc: SparkContext, path: String, isTransposed: Boolean): Unit = {
-    val maxTerms = termTopicsRDD.map(_._1).filter(isTermId).max().toInt + 1
+    val maxTerms = termTopicsRDD.map(_._1).filter(isRealTermId).max().toInt + 1
     val metadata = compact(render(("class" -> sv_classNameV1_0) ~ ("version" -> sv_formatVersionV1_0) ~
       ("alpha" -> alpha) ~ ("beta" -> beta) ~ ("alphaAS" -> alphaAS) ~
         ("numTopics" -> numTopics) ~ ("numTerms" -> numTerms) ~ ("numTokens" -> numTokens) ~
@@ -239,10 +239,14 @@ class DistributedLDAModel(@transient val termTopicsRDD: RDD[(VertexId, TC)],
       val partitioner = defaultPartitioner(termTopicsRDD)
       termTopicsRDD.flatMap {
         case (termId, vector) =>
-        val term = termId.toInt
-        vector.activeIterator.map {
-          case (topic, cnt) => (topic.toLong, (term, cnt))
-        }
+          if (isRealTermId(termId)) {
+            val term = termId.toInt
+            vector.activeIterator.map {
+              case (topic, cnt) => (topic.toLong, (term, cnt))
+            }
+          } else {
+            Iterator.empty
+          }
       }.aggregateByKey[BV[Count]](BSV.zeros[Count](maxTerms), partitioner)((agg, t) => {
         agg(t._1) += t._2
         agg
