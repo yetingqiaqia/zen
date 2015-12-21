@@ -28,8 +28,7 @@ import com.github.cloudml.zen.ml.util._
 import breeze.linalg.{DenseVector => BDV, SparseVector => BSV, Vector => BV, sum}
 import com.google.common.base.Charsets
 import com.google.common.io.Files
-import org.apache.hadoop.io.{NullWritable, Text}
-import org.apache.hadoop.mapred.TextOutputFormat
+import org.apache.hadoop.fs.{FileUtil, Path}
 import org.apache.spark.Partitioner._
 import org.apache.spark.graphx2._
 import org.apache.spark.mllib.util.{Loader, Saveable}
@@ -178,7 +177,7 @@ class DistributedLDAModel(@transient val termTopicsRDD: RDD[(VertexId, TC)],
   val alphaAS: Double,
   var storageLevel: StorageLevel) extends Serializable with Saveable {
 
-  @transient val totalTopicCounter = termTopicsRDD.map(_._2)
+  @transient lazy val totalTopicCounter = termTopicsRDD.map(_._2)
     .aggregate(BDV.zeros[Count](numTopics))(_ :+= _, _ :+= _)
   @transient val algo = new ZenLDA
 
@@ -213,42 +212,38 @@ class DistributedLDAModel(@transient val termTopicsRDD: RDD[(VertexId, TC)],
     new LocalLDAModel(ttcs, numTopics, numTerms, numTokens, alpha, beta, alphaAS)
   }
 
-  override def save(sc: SparkContext, path: String): Unit = save(sc, path, isTransposed=false)
-
-  def save(isTransposed: Boolean): Unit = {
+  def save(): Unit = {
     val sc = termTopicsRDD.context
     val outputPath = sc.getConf.get(cs_outputpath)
-    save(sc, outputPath, isTransposed)
+    save(sc, outputPath)
   }
 
   /**
-   * @param sc           Spark context to get HDFS env from
-   * @param path         output path
-   * @param isTransposed libsvm when `isTransposed` is false, the format of each line:
-   *                     termId  \grave{topicId}:counter \grave{topicId}:counter...,
-   *                     in which \grave{topicId} = topicId + 1
-   *                     otherwise:
-   *                     topicId \grave{termId}:counter \grave{termId}:counter...,
-   *                     in which \grave{termId}= termId + 1
-   */
-  def save(sc: SparkContext, path: String, isTransposed: Boolean): Unit = {
-    val maxTerms = termTopicsRDD.map(_._1).filter(isRealTermId).max().toInt + 1
-    val metadata = compact(render(("class" -> sv_classNameV1_0) ~ ("version" -> sv_formatVersionV1_0) ~
+    * Save model in libsvm format. When `isTransposed` is false, the format of each line:
+    *   termId  \grave{topicId}:counter \grave{topicId}:counter...,
+    * in which \grave{topicId} = topicId + 1
+    * otherwise:
+    *   topicId \grave{termId}:counter \grave{termId}:counter...,
+    * in which \grave{termId}= termId + 1
+    * @param sc           Spark context to get HDFS env from
+    * @param path         output path
+    */
+  override def save(sc: SparkContext, path: String): Unit = {
+    val isTransposed = sc.getConf.getBoolean(cs_saveTransposed, true)
+    var json = ("class" -> sv_classNameV2_0) ~ ("version" -> sv_formatVersionV2_0) ~
       ("alpha" -> alpha) ~ ("beta" -> beta) ~ ("alphaAS" -> alphaAS) ~
-        ("numTopics" -> numTopics) ~ ("numTerms" -> numTerms) ~ ("numTokens" -> numTokens) ~
-        ("isTransposed" -> isTransposed) ~ ("maxTerms" -> maxTerms)))
+      ("numTopics" -> numTopics) ~ ("numTerms" -> numTerms) ~ ("numTokens" -> numTokens) ~
+      ("isTransposed" -> isTransposed)
     val rdd = if (isTransposed) {
+      val maxTerms = termTopicsRDD.map(_._1).filter(isTermId).max().toInt + 1
+      json = json ~ ("maxTerms" -> maxTerms)
       val partitioner = defaultPartitioner(termTopicsRDD)
       termTopicsRDD.flatMap {
         case (termId, vector) =>
-          if (isRealTermId(termId)) {
-            val term = termId.toInt
-            vector.activeIterator.map {
-              case (topic, cnt) => (topic.toLong, (term, cnt))
-            }
-          } else {
-            Iterator.empty
-          }
+        val term = termId.toInt
+        vector.activeIterator.map {
+          case (topic, cnt) => (topic.toLong, (term, cnt))
+        }
       }.aggregateByKey[BV[Count]](BSV.zeros[Count](maxTerms), partitioner)((agg, t) => {
         agg(t._1) += t._2
         agg
@@ -257,39 +252,51 @@ class DistributedLDAModel(@transient val termTopicsRDD: RDD[(VertexId, TC)],
       termTopicsRDD
     }
     rdd.persist(storageLevel)
+    val metadata = compact(render(json))
 
     val saveAsSolid = sc.getConf.getBoolean(cs_saveAsSolid, false)
+    val savPath = if (saveAsSolid) new Path(path + ".sav") else new Path(path)
+    val savDir = savPath.toUri.toString
+    val metaDir = LoaderUtils.metadataPath(savDir)
+    val dataDir = LoaderUtils.dataPath(savDir)
+    val fs = SparkUtils.getFileSystem(sc.getConf, savPath)
+
+    fs.delete(savPath, true)
+    sc.parallelize(Seq(metadata), 1).saveAsTextFile(metaDir)
+    // save model with the topic or word-term descending order
+    rdd.map { case (id, vector) =>
+      val list = vector.activeIterator.toSeq.sortWith(_._2 > _._2)
+        .map(t => s"${t._1}:${t._2}").mkString("\t")
+      s"$id\t$list"
+    }.saveAsTextFile(dataDir)
     if (saveAsSolid) {
-      val metadata_line = metadata.replaceAll("\n", "")
-      val rdd_txt = rdd.map {
-        case (id, vector) =>
-          val list = vector.activeIterator.toList.sortWith(_._2 > _._2)
-            .map(t => s"${t._1}:${t._2}").mkString("\t")
-          id.toString + "\t" + list
+      val cpmgPath = new Path(path + ".cpmg")
+      fs.delete(cpmgPath, true)
+      var suc = fs.rename(new Path(metaDir + "/part-00000"), new Path(dataDir + "/_meta"))
+      if (suc) {
+        suc = FileUtil.copyMerge(fs, new Path(dataDir), fs, cpmgPath, false, sc.hadoopConfiguration, null)
       }
-      LoaderUtils.RDD2HDFSFile[String](sc, rdd_txt, path, metadata_line, t => t)
-    } else {
-      sc.parallelize(Seq(metadata), 1).saveAsTextFile(LoaderUtils.metadataPath(path))
-      // save model with the topic or word-term descending order
-      rdd.map {
-        case (id, vector) =>
-          val list = vector.activeIterator.toList.sortWith(_._2 > _._2)
-            .map(t => s"${t._1}:${t._2}").mkString("\t")
-          (NullWritable.get(), new Text(id + "\t" + list))
-      }.saveAsHadoopFile[TextOutputFormat[NullWritable, Text]](LoaderUtils.dataPath(path))
+      if (suc) {
+        suc = fs.rename(cpmgPath, new Path(path))
+      }
+      fs.delete(savPath, true)
+      fs.delete(cpmgPath, true)
+      if (!suc) {
+        throw new IOException("Save model error!")
+      }
     }
   }
 
-  override protected def formatVersion: String = sv_formatVersionV1_0
+  override protected def formatVersion: String = sv_formatVersionV2_0
 }
 
 object LDAModel extends Loader[DistributedLDAModel] {
-  type MetaT = (Int, Int, Long, Double, Double, Double, Boolean, Int)
+  type MetaT = (Int, Int, Long, Double, Double, Double, Boolean, Option[Int])
 
   override def load(sc: SparkContext, path: String): DistributedLDAModel = {
     val (loadedClassName, version, metadata) = LoaderUtils.loadMetadata(sc, path)
     val dataPath = LoaderUtils.dataPath(path)
-    if (loadedClassName == sv_classNameV1_0 && version == sv_formatVersionV1_0) {
+    if (loadedClassName == sv_classNameV2_0 && version == sv_formatVersionV2_0) {
       val metas = parseMeta(metadata)
       var rdd = sc.textFile(dataPath).map(line => parseLine(metas, line))
       rdd = sc.getConf.getOption(cs_numPartitions).map(_.toInt) match {
@@ -299,7 +306,7 @@ object LDAModel extends Loader[DistributedLDAModel] {
       loadLDAModel(metas, rdd)
     } else {
       throw new Exception(s"LDAModel.load did not recognize model with (className, format version):" +
-        s"($loadedClassName, $version). Supported: ($sv_classNameV1_0, $sv_formatVersionV1_0)")
+        s"($loadedClassName, $version). Supported: ($sv_classNameV2_0, $sv_formatVersionV2_0)")
     }
   }
 
@@ -317,7 +324,7 @@ object LDAModel extends Loader[DistributedLDAModel] {
     val numTerms = (metadata \ "numTerms").extract[Int]
     val numTokens = (metadata \ "numTokens").extract[Int]
     val isTransposed = (metadata \ "isTransposed").extract[Boolean]
-    val maxTerms = (metadata \ "maxTerms").extract[Int]
+    val maxTerms = (metadata \ "maxTerms").extractOpt[Int]
     (numTopics, numTerms, numTokens, alpha, beta, alphaAS, isTransposed, maxTerms)
   }
 
@@ -325,7 +332,7 @@ object LDAModel extends Loader[DistributedLDAModel] {
     val numTopics = metas._1
     val isTransposed = metas._7
     val maxTerms = metas._8
-    val numSize = if (isTransposed) maxTerms else numTopics
+    val numSize = if (isTransposed) maxTerms.get else numTopics
     val sv = BSV.zeros[Count](numSize)
     val arr = line.split("\t")
     arr.tail.foreach(sub => {

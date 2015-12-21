@@ -47,8 +47,10 @@ class LDA(@transient var corpus: Graph[TC, TA],
   val algo: LDAAlgorithm,
   var storageLevel: StorageLevel) extends Serializable {
 
-  @transient var topicCounters: BDV[Count] = null
+  @transient var topicCounters: BDV[Count] = _
   @transient lazy val seed = new XORShiftRandom().nextInt()
+  @transient var edgeCpFile: String = _
+  @transient var vertCpFile: String = _
 
   def setAlpha(alpha: Double): this.type = {
     this.alpha = alpha
@@ -146,12 +148,12 @@ class LDA(@transient var corpus: Graph[TC, TA],
       if (pplx) {
         LDAPerplexity(this).output(println)
       }
-      if (saveIntv > 0 && iter % saveIntv == 0) {
+      if (saveIntv > 0 && iter % saveIntv == 0 && iter < totalIter) {
         val model = toLDAModel()
         val savPath = new Path(scConf.get(cs_outputpath) + s"-iter$iter")
         val fs = SparkUtils.getFileSystem(scConf, savPath)
         fs.delete(savPath, true)
-        model.save(scContext, savPath.toString, isTransposed=true)
+        model.save(scContext, savPath.toString)
         println(s"Model saved after Iteration $iter")
       }
       val elapsedSeconds = (System.nanoTime() - startedAt) / 1e9
@@ -185,6 +187,13 @@ class LDA(@transient var corpus: Graph[TC, TA],
     prevCorpus.edges.unpersist(blocking=false)
     prevCorpus.vertices.unpersist(blocking=false)
 
+    if (needChkpt) {
+      if (edgeCpFile != null && vertCpFile != null) {
+        SparkUtils.deleteChkptDirs(scConf, Array(edgeCpFile, vertCpFile))
+      }
+      edgeCpFile = corpus.edges.getCheckpointFile.get
+      vertCpFile = corpus.vertices.getCheckpointFile.get
+    }
     val elapsedSeconds = (System.nanoTime() - startedAt) / 1e9
     println(s"Sampling & update paras $sampIter takes: $elapsedSeconds secs")
   }
@@ -394,6 +403,7 @@ object LDA {
     }
     val initCorpus: Graph[TC, TA] = LBVertexRDDBuilder.fromEdges(docs, storageLevel)
     initCorpus.persist(storageLevel)
+    initCorpus.edges.setName("rawEdges").count()
     val partCorpus = conf.get(cs_partStrategy, "dbh") match {
       case "byterm" =>
         println("partition corpus by terms.")
@@ -440,7 +450,7 @@ object LDA {
       val gen = new XORShiftRandom(pid + 117)
       var pidMark = pid.toLong << 48
       iter.flatMap(line => {
-        val tokens = line.split(raw"\t|\s+")
+        val tokens = line.split(raw"\t|\s+").view
         val docId = if (ignDid) {
           pidMark += 1
           pidMark
