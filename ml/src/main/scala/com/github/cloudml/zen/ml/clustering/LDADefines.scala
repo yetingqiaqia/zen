@@ -63,6 +63,7 @@ object LDADefines {
   val cs_ignoreDocId = "zen.lda.ignoreDocId"
   val cs_inputFormat = "zen.lda.inputFormat"
   val cs_inputSemiRate = "zen.lda.inputSemiRate"
+  val cs_numClass = "zen.lda.numClass"
   // make docId always be negative, so that the doc vertex always be the dest vertex
   @inline def genNewDocId(docId: Long): VertexId = {
     assert(docId >= 0)

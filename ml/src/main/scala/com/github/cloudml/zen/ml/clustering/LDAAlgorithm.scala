@@ -521,8 +521,8 @@ class ZenSemiLDA extends LDAWordByWord {
     // in GraphX, edges in a partition are clustered by source IDs (term id in this case)
     // so, use below simple cache to avoid calculating table each time
     val global: DiscreteSampler[Double] = accelMethod match {
-      case "ftree" => new FTree[Double](numTopics, isSparse=false)
-      case "alias" | "hybrid" => new AliasTable(numTopics)
+      case "ftree" => new FTree[Double](isSparse=false)
+      case "alias" | "hybrid" => new AliasTable
     }
     val gens = new Array[XORShiftRandom](numThreads)
     val termDists = new Array[DiscreteSampler[Double]](numThreads)
@@ -537,10 +537,12 @@ class ZenSemiLDA extends LDAWordByWord {
         gen = new XORShiftRandom(((seed + sampIter) * numPartitions + pid) * numThreads + thid)
         gens(thid) = gen
         termDists(thid) = accelMethod match {
-          case "alias" => new AliasTable[Double](numTopics)
-          case "ftree" | "hybrid" => new FTree(numTopics, isSparse=true)
+          case "alias" => new AliasTable[Double]
+          case "ftree" | "hybrid" => new FTree(isSparse=true)
         }
-        cdfDists(thid) = new CumulativeDist[Double](numTopics)
+        cdfDists(thid) = new CumulativeDist[Double]
+        termDists(thid).reset(numTopics)
+        cdfDists(thid).reset(numTopics)
       }
       val termDist = termDists(thid)
       val si = lcSrcIds(offset)

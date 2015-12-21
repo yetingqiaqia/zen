@@ -65,6 +65,7 @@ object LDADriver {
     conf.set(cs_outputpath, outputPath)
     conf.set(cs_storageLevel, slvlStr)
 
+
     conf.set(cs_sampleRate, options.getOrElse("samplerate", "1.0"))
     conf.set(cs_numThreads, options.getOrElse("numthreads", "1"))
     conf.set(cs_inputFormat, options.getOrElse("inputformat", "semi"))
@@ -78,6 +79,7 @@ object LDADriver {
     conf.set(cs_saveInterval, options.getOrElse("saveinterval", "0"))
     conf.set(cs_saveAsSolid, options.getOrElse("saveassolid", "false"))
     conf.set(cs_ignoreDocId, options.getOrElse("ignoredocid", "false"))
+    conf.set(cs_numClass, options.getOrElse("numclass", "0"))
 
     conf.set("spark.task.cpus", conf.get(cs_numThreads))
     val useKyro = options.get("usekryo").exists(_.toBoolean)
@@ -155,6 +157,7 @@ object LDADriver {
       "           -numThreads=<Int(*1)>\n" +
       "           -inputFormat=<*semi|raw|bow>\n" +
       "           -inputSemiRate=<Double(*1.0)>\n" +
+      "           -numClass=<Int(*0)>\n" +
       "           -LDAAlgorithm=<*ZenSemiLDA|ZenLDA|LightLDA|SparseLDA>\n" +
       "           -accelMethod=<*Alias|FTree|Hybrid>\n" +
       "           -storageLevel=<StorageLevel(*MEMORY_AND_DISK)>\n" +

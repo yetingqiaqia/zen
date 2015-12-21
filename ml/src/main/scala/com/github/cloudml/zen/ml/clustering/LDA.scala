@@ -390,7 +390,7 @@ object LDA {
       case "raw" => convertRawDocs(orgDocs.asInstanceOf[RDD[String]], numTopics, ignDid, reverse)
       case "bow" => convertBowDocs(orgDocs.asInstanceOf[RDD[BOW]], numTopics, ignDid, reverse)
       case "semi" => convertSemiDocs(orgDocs.asInstanceOf[RDD[String]],conf.get(cs_inputSemiRate).toDouble,
-        numTopics, ignDid, reverse)
+        numTopics, conf.get(cs_numClass).toInt, ignDid, reverse)
     }
     val initCorpus: Graph[TC, TA] = LBVertexRDDBuilder.fromEdges(docs, storageLevel)
     initCorpus.persist(storageLevel)
@@ -481,6 +481,7 @@ object LDA {
   def convertSemiDocs(semiDocs: RDD[String],
                       semiRate: Double,
                       numTopics: Int,
+                      numClass: Int,
                       ignDid: Boolean,
                       reverse: Boolean): RDD[Edge[TA]] = {
     semiDocs.mapPartitionsWithIndex((pid, iter) => {
@@ -513,13 +514,21 @@ object LDA {
           Iterator.empty
         }
 
-        val edger = toEdge(gen, docId, numTopics, reverse)_
+        val edgerUnlabelled = toEdge(gen, docId, numTopics, reverse, numClass)_
+        val edgerLabelled = toEdgeSemi(docId, classId, reverse)_
+
         tokensX.tail.map(field => {
           val pairs = field.split(":")
           val termId = pairs(0).toInt
           val termCnt = if (pairs.length > 1) pairs(1).toInt else 1
           (termId, termCnt)
-        }).filter(_._2 > 0).map(edger) ++ virtualEdge
+        }).filter(_._2 > 0).map(
+          if (classId == -1){
+            edgerUnlabelled
+          } else {
+            edgerLabelled
+          }
+        ) ++ virtualEdge
 
       })
     })
@@ -596,10 +605,24 @@ object LDA {
   private def toEdge(gen: Random,
     docId: Long,
     numTopics: Int,
-    reverse: Boolean)
+    reverse: Boolean,
+    numVirtualTopics: Int = 0)
     (termPair: (Int, Count)): Edge[TA] = {
     val (termId, termCnt) = termPair
-    val topics = Array.fill(termCnt)(gen.nextInt(numTopics))
+    val topics = Array.fill(termCnt)(gen.nextInt(numTopics - numVirtualTopics) + numVirtualTopics)
+    if (!reverse) {
+      Edge(termId, genNewDocId(docId), topics)
+    } else {
+      Edge(genNewDocId(docId), termId, topics)
+    }
+  }
+
+  private def toEdgeSemi(docId: Long,
+                        topicId: Int,
+                     reverse: Boolean)
+                    (termPair: (Int, Count)): Edge[TA] = {
+    val (termId, termCnt) = termPair
+    val topics = Array.fill(termCnt)(topicId)
     if (!reverse) {
       Edge(termId, genNewDocId(docId), topics)
     } else {
