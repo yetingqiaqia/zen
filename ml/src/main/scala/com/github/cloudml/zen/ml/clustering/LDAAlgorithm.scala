@@ -493,18 +493,18 @@ abstract class LDAWordByWord extends LDAAlgorithm {
 
 class ZenSemiLDA extends LDAWordByWord {
   override def samplePartition(numThreads: Int, // N of threads
-                               accelMethod: String, // Accelerating Methods for Sampling
-                               numPartitions: Int, // N of Partitions
-                               sampIter: Int,
-                               seed: Int,
-                               topicCounters: BDV[Count], //
-                               numTokens: Long, // N of total tokens
-                               numTopics: Int, // N of total topics
-                               numTerms: Int,
-                               alpha: Double,
-                               alphaAS: Double,
-                               beta: Double)
-                              (pid: Int, ep: EdgePartition[TA, TC]): EdgePartition[TA, TC] = {
+    accelMethod: String, // Accelerating Methods for Sampling
+    numPartitions: Int, // N of Partitions
+    sampIter: Int,
+    seed: Int,
+    topicCounters: BDV[Count], //
+    numTokens: Long, // N of total tokens
+    numTopics: Int, // N of total topics
+    numTerms: Int,
+    alpha: Double,
+    alphaAS: Double,
+    beta: Double)
+    (pid: Int, ep: EdgePartition[TA, TC]): EdgePartition[TA, TC] = {
     val alphaRatio = alpha * numTopics / (numTokens + alphaAS * numTopics) // alpha
     val betaSum = beta * numTerms
     val denoms = calc_denoms(topicCounters, betaSum)
@@ -546,7 +546,7 @@ class ZenSemiLDA extends LDAWordByWord {
       }
       val termDist = termDists(thid)
       val si = lcSrcIds(offset)
-      if (isVirtualTermId(l2g(si))==false) {
+      if (!isVirtualTermId(l2g(si))) {
         val termTopics = vattrs(si)
 
         resetDist_waSparse(termDist, alphak_denoms, termTopics)
@@ -586,11 +586,11 @@ class ZenSemiLDA extends LDAWordByWord {
   }
 
   def tokenSampling(gen: Random,
-                    ab: DiscreteSampler[Double],
-                    wa: DiscreteSampler[Double],
-                    dwb: CumulativeDist[Double],
-                    termTopics: BDV[Count],
-                    topic: Int): Int = {
+    ab: DiscreteSampler[Double],
+    wa: DiscreteSampler[Double],
+    dwb: CumulativeDist[Double],
+    termTopics: BDV[Count],
+    topic: Int): Int = {
     val dwbSum = dwb.norm
     val sum23 = dwbSum + wa.norm
     val distSum = sum23 + ab.norm
@@ -608,13 +608,13 @@ class ZenSemiLDA extends LDAWordByWord {
   }
 
   def tokenResampling(gen: Random,
-                      ab: DiscreteSampler[Double],
-                      wa: DiscreteSampler[Double],
-                      dwb: CumulativeDist[Double],
-                      termTopics: BDV[Count],
-                      docTopics: BSV[Count],
-                      topic: Int,
-                      beta: Double): Int = {
+    ab: DiscreteSampler[Double],
+    wa: DiscreteSampler[Double],
+    dwb: CumulativeDist[Double],
+    termTopics: BDV[Count],
+    docTopics: BSV[Count],
+    topic: Int,
+    beta: Double): Int = {
     val dwbSum = dwb.norm
     val sum23 = dwbSum + wa.norm
     val distSum = sum23 + ab.norm
@@ -634,7 +634,6 @@ class ZenSemiLDA extends LDAWordByWord {
     }
   }
 }
-
 
 class ZenLDA extends LDAWordByWord {
   override def samplePartition(numThreads: Int,

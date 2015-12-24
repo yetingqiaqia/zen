@@ -64,7 +64,8 @@ object LDADefines {
   val cs_saveTransposed = "zen.lda.saveTransposed"
   val cs_inputFormat = "zen.lda.inputFormat"
   val cs_inputSemiRate = "zen.lda.inputSemiRate"
-  val cs_numClass = "zen.lda.numClass"
+  val cs_numClasses = "zen.lda.numClasses"
+
   // make docId always be negative, so that the doc vertex always be the dest vertex
   @inline def genNewDocId(docId: Long): VertexId = {
     assert(docId >= 0)
@@ -75,7 +76,7 @@ object LDADefines {
 
   @inline def isTermId(vid: VertexId): Boolean = vid >= 0L
 
-  @inline def isVirtualTermId(vid: VertexId): Boolean = ((vid &  0x7fff000000000000L) ==  0x7fff000000000000L)
+  @inline def isVirtualTermId(vid: VertexId): Boolean = (vid & 0x7fff000000000000L) == 0x7fff000000000000L
 
   @inline def isRealTermId(vid: VertexId): Boolean = isTermId(vid) && !isVirtualTermId(vid)
 
