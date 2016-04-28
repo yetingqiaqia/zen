@@ -65,7 +65,6 @@ object LDADriver {
     conf.set(cs_outputpath, outputPath)
     conf.set(cs_storageLevel, slvlStr)
 
-
     conf.set(cs_sampleRate, options.getOrElse("samplerate", "1.0"))
     conf.set(cs_numThreads, options.getOrElse("numthreads", "1"))
     conf.set(cs_inputFormat, options.getOrElse("inputformat", "semi"))
@@ -77,9 +76,10 @@ object LDADriver {
     conf.set(cs_chkptInterval, options.getOrElse("chkptinterval", "10"))
     conf.set(cs_calcPerplexity, options.getOrElse("calcperplexity", "false"))
     conf.set(cs_saveInterval, options.getOrElse("saveinterval", "0"))
+    conf.set(cs_saveTransposed, options.getOrElse("savetransposed", "true"))
     conf.set(cs_saveAsSolid, options.getOrElse("saveassolid", "false"))
     conf.set(cs_ignoreDocId, options.getOrElse("ignoredocid", "false"))
-    conf.set(cs_numClass, options.getOrElse("numclass", "0"))
+    conf.set(cs_numClasses, options.getOrElse("numclass", "0"))
 
     conf.set("spark.task.cpus", conf.get(cs_numThreads))
     val useKyro = options.get("usekryo").exists(_.toBoolean)
@@ -133,7 +133,7 @@ object LDADriver {
     val termModel = LDA.train(docs, totalIter, numTopics, alpha, beta, alphaAS, storageLevel)
     val trainingEndedTime = System.currentTimeMillis()
     println("save the model in term-topic view")
-    termModel.save(isTransposed=true)
+    termModel.save()
     (trainingEndedTime - trainingStartedTime) / 1e3
   }
 
@@ -157,7 +157,7 @@ object LDADriver {
       "           -numThreads=<Int(*1)>\n" +
       "           -inputFormat=<*semi|raw|bow>\n" +
       "           -inputSemiRate=<Double(*1.0)>\n" +
-      "           -numClass=<Int(*0)>\n" +
+      "           -numClasses=<Int(*0)>\n" +
       "           -LDAAlgorithm=<*ZenSemiLDA|ZenLDA|LightLDA|SparseLDA>\n" +
       "           -accelMethod=<*Alias|FTree|Hybrid>\n" +
       "           -storageLevel=<StorageLevel(*MEMORY_AND_DISK)>\n" +
@@ -166,6 +166,7 @@ object LDADriver {
       "           -chkptInterval=<Int(*10)> (0 or negative disables checkpoint)\n" +
       "           -calcPerplexity=<true|*false>\n" +
       "           -saveInterval=<Int(*0)> (0 or negative disables save at intervals)\n" +
+      "           -saveTransposed=<*true|false>\n" +
       "           -saveAsSolid=<true|*false>\n" +
       "           -ignoreDocId=<true|*false>\n" +
       "           -useKryo=<true|*false>"

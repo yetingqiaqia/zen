@@ -43,8 +43,8 @@ object LDADefines {
   type BOW = (Long, BSV[Count])
   type SEMI = (Long, Long, BSV[Count]) // SEMI type for semi-LDA input
 
-  val sv_formatVersionV1_0 = "1.0"
-  val sv_classNameV1_0 = "com.github.cloudml.zen.ml.clustering.DistributedLDAModel"
+  val sv_formatVersionV2_0 = "2.0"
+  val sv_classNameV2_0 = "com.github.cloudml.zen.ml.clustering.DistributedLDAModel"
   val cs_numTopics = "zen.lda.numTopics"
   val cs_numPartitions = "zen.lda.numPartitions"
   val cs_sampleRate = "zen.lda.sampleRate"
@@ -61,9 +61,11 @@ object LDADefines {
   val cs_saveAsSolid = "zen.lda.saveAsSolid"
   val cs_numThreads = "zen.lda.numThreads"
   val cs_ignoreDocId = "zen.lda.ignoreDocId"
+  val cs_saveTransposed = "zen.lda.saveTransposed"
   val cs_inputFormat = "zen.lda.inputFormat"
   val cs_inputSemiRate = "zen.lda.inputSemiRate"
-  val cs_numClass = "zen.lda.numClass"
+  val cs_numClasses = "zen.lda.numClasses"
+
   // make docId always be negative, so that the doc vertex always be the dest vertex
   @inline def genNewDocId(docId: Long): VertexId = {
     assert(docId >= 0)
@@ -74,7 +76,7 @@ object LDADefines {
 
   @inline def isTermId(vid: VertexId): Boolean = vid >= 0L
 
-  @inline def isVirtualTermId(vid: VertexId): Boolean = ((vid &  0x7fff000000000000L) ==  0x7fff000000000000L)
+  @inline def isVirtualTermId(vid: VertexId): Boolean = (vid & 0x7fff000000000000L) == 0x7fff000000000000L
 
   @inline def isRealTermId(vid: VertexId): Boolean = isTermId(vid) && !isVirtualTermId(vid)
 
